@@ -16,7 +16,7 @@ pip install -r requirements.txt
 
 
 
-We used the [LSUI](https://lintaopeng.github.io/_pages/UIE%20Project%20Page.html) dataset to train the Mobile-Water-Net.  Please cite the paper:["U-shape Transformer for Underwater Image Enhancement"]([U-Shape Transformer for Underwater Image Enhancement | IEEE Journals &amp; Magazine | IEEE Xplore](https://ieeexplore.ieee.org/abstract/document/10129222)) if you used the dataset.
+We used the [LSUI](https://lintaopeng.github.io/_pages/UIE%20Project%20Page.html) dataset to train the Mobile-Water-Net.  Please cite the paper:"U-shape Transformer for Underwater Image Enhancement"([U-Shape Transformer for Underwater Image Enhancement | IEEE Journals &amp; Magazine | IEEE Xplore](https://ieeexplore.ieee.org/abstract/document/10129222)) if you use the dataset.
 
 
 
@@ -28,7 +28,7 @@ We used the [LSUI](https://lintaopeng.github.io/_pages/UIE%20Project%20Page.html
 
 
 
-The Mobile-Water-Net is a U-shape encoder-decoder network consist of five convolutional layers and five deconvolutional layers.  The stdconv is standard convolution layer and the conv1 to conv4 are depthwise separable convolution layers. The decoder of the Mobile-Water-Net utilizes feature-maps produced by the encoder to learn to generate a 256$\times$256$\times$3 image as output.
+The Mobile-Water-Net is a U-shape encoder-decoder network consist of five convolutional layers and five deconvolutional layers.  The stdconv is standard convolution layer and the conv1 to conv4 are depthwise separable convolution layers. The decoder of the Mobile-Water-Net utilizes feature-maps produced by the encoder to learn to generate a 256 $\times$ 256 $\times$ 3 image as output.
 
 
 
@@ -70,7 +70,16 @@ python test.py --dataroot "./data/LSUI/testA" -m "./checkpoints/best.pth.tar" --
 
 
 
-### Citing Mobile-Water-Net
+## Evaluation 
+We evaluate our method by metrics including MSE, PSNR, SSIM, UIQM and UCIQE. The code of the metrics can be seen in the floder "./evaluation".
+
+If you want to evaluate your results, we recommend you to use the jupyuter notebook file "./evaluation/processing.ipynb".
+
+Source code of the metrics:
+- UIQM: https://github.com/rowantseng/FUnIE-GAN-PyTorch/tree/master/evaluation
+- UCIQE: https://github.com/JOU-UIP/UCIQE/
+
+## Citing Mobile-Water-Net
 
 
 
