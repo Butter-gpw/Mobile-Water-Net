@@ -1,6 +1,6 @@
 # Mobile-Water-Net
 
-Official coda of the paper: (not yet pubilshed).
+Official code of paper: (not yet pubilshed).
 
 
 
