@@ -1,5 +1,7 @@
 import torch.nn as nn
 import torch
+from thop import profile
+import time
 
 
 class stdConv(nn.Module):
@@ -13,51 +15,6 @@ class stdConv(nn.Module):
 
     def forward(self, x):
         x = self.stdConv(x)
-        return x
-
-
-class ConBNReLU(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=2, padding=0, groups=1, bias=False):
-        super(ConBNReLU, self).__init__()
-        self.ConBNRe = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, groups=groups,
-                      bias=bias),
-            nn.BatchNorm2d(out_channels, eps=0.001, momentum=0.01, affine=True, track_running_stats=True),
-            nn.ReLU(inplace=True)
-        )
-
-    def forward(self, x):
-        x = self.ConBNRe(x)
-        return x
-
-
-class ConBNHswish(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=2, padding=0, groups=1, bias=False):
-        super(ConBNHswish, self).__init__()
-        self.ConBNHs = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, groups=groups,
-                      bias=bias),
-            nn.BatchNorm2d(out_channels, eps=0.001, momentum=0.01, affine=True, track_running_stats=True),
-            nn.Hardswish()
-        )
-
-    def forward(self, x):
-        x = self.ConBNHs(x)
-        return x
-
-
-class ConBNLinear(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=1, stride=1, padding=0, groups=1, bias=False):
-        super(ConBNLinear, self).__init__()
-        self.ConBNLin = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, groups=groups,
-                      bias=bias),
-            nn.BatchNorm2d(out_channels, eps=0.001, momentum=0.01, affine=True, track_running_stats=True),
-            nn.Identity()
-        )
-
-    def forward(self, x):
-        x = self.ConBNLin(x)
         return x
 
 
@@ -77,72 +34,75 @@ class SEblock(nn.Module):
         return x
 
 
+class ConBNAct(nn.Module):
+    def __init__(self, in_channels, out_channels, act='Linear', kernel_size=1, stride=1, padding=0, groups=1,
+                 bias=False):
+        super(ConBNAct, self).__init__()
+        self.ConBNAct = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, groups=groups,
+                      bias=bias),
+            nn.BatchNorm2d(out_channels, eps=0.001, momentum=0.01, affine=True, track_running_stats=True),
+        )
+        if act == 'Relu' or act == 'R':
+            self.ConBNAct.add_module('Relu', nn.ReLU(inplace=True))
+        elif act == 'Linear' or act == 'L':
+            self.ConBNAct.add_module('Linear', nn.Identity())
+        elif act == 'Hardswish' or act == 'H':
+            self.ConBNAct.add_module("Hardswish", nn.Hardswish())
+        elif act == 'Tanh' or act == 'T':
+            self.ConBNAct.add_module('Tanh', nn.Tanh())
+
+    def forward(self, x):
+        x = self.ConBNAct(x)
+        return x
+
+
+class DSConv(nn.Module):
+    def __init__(self, in_channels, out_channels, act, scale_factor=2, kernel_size=3, stride=2, padding=1):
+        super(DSConv, self).__init__()
+        self.dsconv = nn.Sequential(
+            ConBNAct(in_channels, in_channels * scale_factor, act, kernel_size=1),
+            ConBNAct(in_channels * scale_factor, in_channels * scale_factor, act, kernel_size=kernel_size,
+                     stride=stride, padding=padding, groups=in_channels * scale_factor),
+            SEblock(in_channels * scale_factor, in_channels * scale_factor // 2),
+            ConBNAct(in_channels * scale_factor, out_channels, act='L', kernel_size=1)
+        )
+
+    def forward(self, x):
+        return self.dsconv(x)
+
+
+class DeConv(nn.Module):
+    def __init__(self, in_channels, out_channels, act, kernel_size=3, stride=2, padding=1):
+        super(DeConv, self).__init__()
+        self.deconv = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
+            ConBNAct(in_channels, in_channels, act, kernel_size=kernel_size, stride=stride, padding=padding,
+                     groups=in_channels),
+            SEblock(in_channels, in_channels // 2),
+            ConBNAct(in_channels, out_channels, act, kernel_size=1, stride=1)
+        )
+
+
+    def forward(self, x):
+        return self.deconv(x)
+
+
 class Mobile_Water_Net(nn.Module):
     def __init__(self):
         super(Mobile_Water_Net, self).__init__()
         self.stdconv = stdConv(3, 32, kernel_size=5, padding=2, stride=2)
-        self.conv1 = nn.Sequential(
-            ConBNReLU(32, 128, kernel_size=1, stride=1),
-            ConBNReLU(128, 128, kernel_size=3, stride=2, groups=128, padding=1),
-            SEblock(128, 64),
-            ConBNLinear(128, 128, kernel_size=1, stride=1)
-        )
-        self.conv2 = nn.Sequential(
-            ConBNReLU(128, 256, kernel_size=1, stride=1),
-            ConBNReLU(256, 256,  kernel_size=3, stride=2, groups=256, padding=1),
-            SEblock(256, 128),
-            ConBNLinear(256, 256, kernel_size=1, stride=1)
-        )
+        self.conv1 = DSConv(32, 128, scale_factor=4, act='R', kernel_size=3, stride=2, padding=1)
+        self.conv2 = DSConv(128,256, act='R', kernel_size=3, stride=2, padding=1)
+        self.conv3 = DSConv(256, 256, act='H', kernel_size=3, stride=2, padding=1)
+        self.conv4 = DSConv(256, 256, act='H', kernel_size=3, stride=2, padding=1)
 
-        self.conv3 = nn.Sequential(
-            ConBNHswish(256, 512, kernel_size=1, stride=1),
-            ConBNHswish(512, 512, kernel_size=3, stride=2, groups=512, padding=1),
-            SEblock(512, 256),
-            ConBNLinear(512, 256, kernel_size=1, stride=1)
-        )
-
-        self.conv4 = nn.Sequential(
-            ConBNHswish(256, 512, kernel_size=1, stride=1),
-            ConBNHswish(512, 512, kernel_size=3, stride=2, groups=512, padding=1),
-            SEblock(512, 256),
-            ConBNLinear(512, 256, kernel_size=1, stride=1)
-        )
-
-        self.deconv1 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
-            ConBNHswish(256, 256, kernel_size=3, stride=1, padding=1, groups=256),
-            SEblock(256, 128),
-            ConBNHswish(256, 256, kernel_size=1, stride=1)
-        )
-
-        self.deconv2 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
-            ConBNHswish(512, 512, kernel_size=3, stride=1, padding=1, groups=512),
-            SEblock(512, 256),
-            ConBNHswish(512, 256, kernel_size=1, stride=1)
-        )
-
-        self.deconv3 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
-            ConBNHswish(512, 512, kernel_size=3, stride=1, padding=1, groups=512),
-            SEblock(512, 256),
-            ConBNHswish(512, 128, kernel_size=1, stride=1)
-        )
-
-        self.deconv4 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
-            ConBNHswish(256, 256, kernel_size=3, stride=1, padding=1, groups=256),
-            SEblock(256, 128),
-            ConBNHswish(256, 32, kernel_size=1, stride=1)
-        )
-
-        self.deconv5 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
-            ConBNReLU(64, 256, kernel_size=1, stride=1, groups=16),
-            SEblock(256, 128),
-            ConBNLinear(256, 3, kernel_size=1, stride=1),
-            nn.Tanh()
-        )
+        self.deconv1 = DeConv(256, 256, act='H', kernel_size=3, stride=1, padding=1)
+        self.deconv2 = DeConv(512, 256, act='H', kernel_size=3, stride=1, padding=1)
+        self.deconv3 = DeConv(512, 128, act='H', kernel_size=3, stride=1, padding=1)
+        self.deconv4 = DeConv(256, 32, act='R', kernel_size=3, stride=1, padding=1)
+        self.deconv5 = DeConv(64, 3, act='R', kernel_size=3, stride=1, padding=1)
+        self.deconv5.deconv[-1] = ConBNAct(64, 3, act='T', kernel_size=1)
 
     def forward(self, x):
         d1 = self.stdconv(x)  # (B, 32, 128, 128)
@@ -161,10 +121,19 @@ class Mobile_Water_Net(nn.Module):
 
 
 if __name__ == '__main__':
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+
     x = torch.randn((1, 3, 256, 256))
 
     model = Mobile_Water_Net()
-    num_params = sum(p.numel() for p in model.parameters())
-    # print(model)
-    print(f'网络参数量：{num_params}')
-    model(x)
+    model = model.to(device)
+    x = x.to(device)
+    flops, params = profile(model, (x,))
+    print('flops: %.2f M, params: %.2f M' % (flops / 1e6, params / 1e6))
+
+    torch.cuda.synchronize()
+    start = time.time()
+    result = model(x)
+    torch.cuda.synchronize()
+    end = time.time()
+    print('infer_time:', end - start)
