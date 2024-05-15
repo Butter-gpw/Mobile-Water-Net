@@ -25,14 +25,15 @@ class TrainOptions:
         # path
         parser.add_argument("--model_resume", default="", type=str, metavar="PATH",
                             help="path to latest model checkpoint (default: none)")
-        parser.add_argument('--dataroot', default='', type=str,
+        parser.add_argument('--dataroot', default='/home/guopeiwen/code/Datasets/EUVP', type=str,
                             help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
         parser.add_argument('--checkpoints_dirs', type=str, default='./checkpoints/',
                             help='experiment dirs are saved here')
-        parser.add_argument('--exp_name', type=str, default='',
+
+        parser.add_argument('--exp_name', type=str, default='EUVP_CA1',
                             help='experiment dirs where checkpoints are saved')
 
-        parser.add_argument("-b", "--batch_size", default=24, type=int,
+        parser.add_argument("-b", "--batch_size", default=22, type=int,
                             metavar="N",
                             help="mini-batch size, this is the total "
                                  "batch size of all GPUs on the current node when "
@@ -45,7 +46,9 @@ class TrainOptions:
                             help="Train contrast_Learning_feature extractor")
         parser.add_argument("--L1_loss_weight", default=1, type=float, help="L1_loss weight in training")
         parser.add_argument("--ssim_loss_weight", default=1, type=float, help="ssim_loss_weight in training")
-        parser.add_argument("--cl_loss_weight", default=0.2, type=float, help="cl_loss_weight in training")
+
+        parser.add_argument("--cl_loss", default='CR', type=str, help="contrastive loss for training, ours: ours contrastive loss for training or, CR: CR loss, our cl loss don't work, so just use CR. ")
+        parser.add_argument("--cl_loss_weight", default=0.1, type=float, help="cl_loss_weight in training")
         parser.add_argument("--T", default=0.07, type=float, help="softmax temperature")
 
         return parser

@@ -1,6 +1,5 @@
 import os
-import torch
-import time
+
 import numpy as np
 from datasets import PairDataset, split_data
 from options import TrainOptions
@@ -8,8 +7,8 @@ from util import *
 from models.ContrastLoss import *
 from shutil import copyfile
 from models.SSIMLoss import SSIM_LOSS
-from datetime import datetime, timedelta, timezone
-from models.mobile_water_net import *
+from datetime import datetime
+from models.mobile_water_net import Mobile_Water_Net
 import torch.optim as optim
 
 """
@@ -41,7 +40,9 @@ class Trainer:
         self.print_freq = 20
         self.best_loss = 1e6
 
-        self.model = Mobile_Water_Net().to(self.device)
+
+        self.model = Mobile_Water_Net()
+        self.model = self.model.to(self.device)
 
         if self.opt.model_resume:
             self.load(self.opt.model_resume)
@@ -49,7 +50,13 @@ class Trainer:
         # loss function
         self.criterion = torch.nn.L1Loss().to(self.device)
         self.ssim_criterion = SSIM_LOSS().to(self.device)
-        self.layer_infoNCE_loss = Contrast_Learning_Loss(self.device, self.opt.T, self.opt.requires_grad).to(self.device)
+
+        if self.opt.cl_loss_weight > 0 and (self.opt.cl_loss == 'ours' or self.opt.cl_loss == 'CR'):
+            if self.opt.cl_loss == 'ours':
+                self.CL_Loss = Contrast_Learning_Loss(self.device, self.opt.T, self.opt.requires_grad).to(
+                    self.device)
+            if self.opt.cl_loss == 'CR':
+                self.CL_Loss = ContrastLoss(self.device)
 
         self.gen_optimizer = optim.Adam(
             filter(lambda p: p.requires_grad, self.model.parameters()), self.opt.lr)
@@ -69,10 +76,14 @@ class Trainer:
         batch_time = AverageMeter("Time", "3.3f")
         Total_losses = AverageMeter("Total Loss")
         L1_losses = AverageMeter("L1 Loss")
-        cl_losses = AverageMeter("Contrast Loss")
         ssim_losses = AverageMeter("SSIM Loss")
-        progress = ProgressMeter(len(self.train_loader), [
-            batch_time, Total_losses, L1_losses, cl_losses, ssim_losses], prefix="Train: ")
+
+        meters = [batch_time, Total_losses, L1_losses, ssim_losses]
+        if self.opt.cl_loss_weight > 0:
+            cl_losses = AverageMeter("Contrast Loss")
+            meters.append(cl_losses)
+
+        progress = ProgressMeter(len(self.train_loader), meters, prefix="Train: ")
 
         end = time.time()
         for batch_idx, (ori_images, ref_images) in enumerate(self.train_loader):
@@ -85,12 +96,14 @@ class Trainer:
             L1_loss = self.criterion(fake_images, ref_images)
             ssim_loss = self.ssim_criterion(fake_images, ref_images)
 
-            # Contrast_Learning_Loss
-            cl_loss = self.layer_infoNCE_loss(fake_images, ref_images, ori_images)
-
             # Total loss
-            total_loss = (
-                        self.opt.L1_loss_weight * L1_loss + self.opt.cl_loss_weight * cl_loss + self.opt.ssim_loss_weight * ssim_loss)
+            total_loss = self.opt.L1_loss_weight * L1_loss + self.opt.ssim_loss_weight * ssim_loss
+
+            # Contrast_Learning_Loss
+            if self.opt.cl_loss_weight > 0:
+                cl_loss = self.CL_Loss(fake_images, ref_images, ori_images)
+                total_loss += self.opt.cl_loss_weight * cl_loss
+
             self.gen_optimizer.zero_grad()
             total_loss.backward()
             self.gen_optimizer.step()
@@ -98,8 +111,10 @@ class Trainer:
             # Update
             Total_losses.update(total_loss.item(), bs)
             L1_losses.update(L1_loss.item(), bs)
-            cl_losses.update(cl_loss.item(), bs)
             ssim_losses.update(ssim_loss.item(), bs)
+
+            if self.opt.cl_loss_weight > 0:
+                cl_losses.update(cl_loss.item(), bs)
 
             batch_time.update(time.time() - end)
             end = time.time()
@@ -115,11 +130,15 @@ class Trainer:
         batch_time = AverageMeter("Time", "3.3f")
         Total_losses = AverageMeter("Total Loss")
         L1_losses = AverageMeter("L1 Loss")
-        cl_losses = AverageMeter("Contrast Loss")
         ssim_losses = AverageMeter("SSIM Loss")
 
-        progress = ProgressMeter(len(self.valid_loader), [
-            batch_time, Total_losses, L1_losses, cl_losses, ssim_losses], prefix="Valid: ")
+        meters = [batch_time, Total_losses, L1_losses, ssim_losses]
+
+        if self.opt.cl_loss_weight > 0:
+            cl_losses = AverageMeter("Contrast Loss")
+            meters.append(cl_losses)
+
+        progress = ProgressMeter(len(self.valid_loader), meters, prefix="Valid: ")
 
         with torch.no_grad():
             end = time.time()
@@ -133,17 +152,22 @@ class Trainer:
 
                 # Validate the generator
                 L1_loss = self.criterion(fake_images, ref_images)
-                cl_loss = self.layer_infoNCE_loss(fake_images, ref_images, ori_images)
                 ssim_loss = self.ssim_criterion(fake_images, ref_images)
 
-                # total loss
-                Total_loss = (
-                            self.opt.L1_loss_weight * L1_loss + self.opt.cl_loss_weight * cl_loss + self.opt.ssim_loss_weight * ssim_loss)
+                # Total loss
+                total_loss = self.opt.L1_loss_weight * L1_loss + self.opt.ssim_loss_weight * ssim_loss
 
-                Total_losses.update(Total_loss.item(), bs)
+                # Contrast_Learning_Loss
+                if self.opt.cl_loss_weight > 0:
+                    cl_loss = self.CL_Loss(fake_images, ref_images, ori_images)
+                    total_loss += self.opt.cl_loss_weight * cl_loss
+
+                # Update
+                Total_losses.update(total_loss.item(), bs)
                 L1_losses.update(L1_loss.item(), bs)
-                cl_losses.update(cl_loss.item(), bs)
                 ssim_losses.update(ssim_loss.item(), bs)
+                if self.opt.cl_loss_weight > 0:
+                    cl_losses.update(cl_loss.item(), bs)
 
                 batch_time.update(time.time() - end)
                 end = time.time()
@@ -184,7 +208,6 @@ class Trainer:
 
 if __name__ == '__main__':
     stat_time = datetime.now()
-
 
     opt = TrainOptions()
     opt = opt.initialize(opt.opt).parse_args()
